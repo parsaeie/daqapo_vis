@@ -1,0 +1,116 @@
+#' Detect dependency violations between attributes
+#'
+#' Function detecting violations of dependencies between attributes (i.e. condition(s) that should hold when (an)other condition(s) hold(s))
+#' @inheritParams detect_activity_frequency_violations
+#' @param antecedent (Vector of) condition(s) which serve as an antecedent (if the condition(s) in antecedent hold, then the condition(s) in consequent should also hold)
+#' @param consequent (Vector of) condition(s) which serve as a consequent (if the condition(s) in antecedent hold, then the condition(s) in consequent should also hold)
+#' @return activitylog containing the rows of the original activity log for which the dependencies between attributes are violated
+#' @examples
+#' \donttest{
+#' data("hospital_actlog")
+#' detect_attribute_dependencies(activitylog = hospital_actlog,
+#'      antecedent = activity == "Registration",
+#'      consequent = startsWith(originator,"Clerk"))
+#' }
+#' @export
+detect_attribute_dependencies <- function(activitylog, antecedent, consequent, details = TRUE, filter_condition = NULL, ...){
+  
+  # Initiate warning variables
+  filter_specified <- FALSE
+  error.cond1 <- FALSE
+  error.cond2 <- FALSE
+  
+  
+  # Apply filter condition when specified
+  filter_specified <- FALSE
+  tryCatch({
+    is.null(filter_condition)
+  }, error = function(e) {
+    filter_specified <<- TRUE
+  }
+  )
+  
+  if(!filter_specified) {
+    # geen filter gespecifieerd.
+    
+  } else {
+    filter_condition_q <- enquo(filter_condition)
+    activitylog <- APPLY_FILTER(activitylog, filter_condition_q = filter_condition_q)
+    
+  }
+  # Quote antecedent and consequent
+  antecedent <- enquo(antecedent)
+  consequent <- enquo(consequent)
+  
+  # Check rows in activity log for which conditions in condition_vector1 holds
+  tryCatch({
+    activity_log_cond1 <- activitylog %>% filter(!!(antecedent))
+  }, error = function(e) {
+    error.cond1 <<- TRUE
+  })
+  
+  if(error.cond1) {
+    stop("The first condition vector (", expr_text(antecedent), ") is not valid. Check the syntax and column names.")
+  }
+  
+  # Check rows for which both condition_vector1 and condition_vector2 holds
+  tryCatch({
+    activity_log_cond12 <- activity_log_cond1 %>% filter(!!(consequent))
+  }, error = function(e) {
+    error.cond2 <<- TRUE
+  })
+  
+  if(error.cond2) {
+    stop("The second condition vector (", expr_text(consequent), ") is not valid. Check the syntax and column names.")
+  }
+  
+  # Prepare output
+  stat_true <- nrow(activity_log_cond12) / nrow(activity_log_cond1) * 100
+  stat_false <- 100 - stat_true
+  
+  # Print output
+  #NEW Section >>>>>>>>>>>>>>>>>> Start
+  combined_process_map_att_dep(activitylog,
+                       filter_case(activitylog, case_labels(
+                         dplyr::setdiff(activity_log_cond1, activity_log_cond12)
+                       ), reverse = T)) %>% print()
+  #NEW Section >>>>>>>>>>>>>>>>>> END
+  
+  message("*** OUTPUT ***")
+  message("The following statement was checked: if condition(s) ", expr_text(antecedent), " hold(s), then ", expr_text(consequent), " should also hold.")
+  message("This statement holds for ",
+          nrow(activity_log_cond12), " (", round(stat_true, 2), "%) of the rows in the activity log for which the first condition(s) hold and does not hold for ",
+          nrow(activity_log_cond1) - nrow(activity_log_cond12), " (", round(stat_false, 2), "%) of these rows.", "\n")
+  
+  if(details == TRUE){
+    if(stat_false > 0){
+      message("For the following rows, the first condition(s) hold(s), but the second condition does not:")
+      return(dplyr::setdiff(activity_log_cond1,activity_log_cond12))
+    }
+  }
+}
+
+#NEW Section >>>>>>>>>>>>>>>>>> Start
+
+combined_process_map_att_dep <- function(activitylog_1, activitylog_2) {
+  processs_map_1 <- activitylog_1 %>%
+    processmapR::process_map(processmapR::frequency("relative_case"), sec = processmapR::frequency("absolute_case"))
+  
+  processs_map_2 <- activitylog_2 %>%
+    processmapR::process_map(processmapR::frequency("relative_case"), sec = processmapR::frequency("absolute_case"))
+  
+  header <- tags$div("From Top to Bottom: Process map of All Cases and Cases without Violations",
+                     style = "justify-content: center;align-items: center;text-align: center;") %>% tags$br() %>%
+    tags$br()
+  
+  manipulateWidget::combineWidgets(
+    processs_map_1,
+    processs_map_2,
+    ncol = 1,
+    nrow = 2,
+    header = header,
+    byrow = T,
+    width = 500
+  ) %>% return()
+}
+#NEW Section >>>>>>>>>>>>>>>>>> END
